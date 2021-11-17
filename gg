@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+
+"""
+Main go-git module that dispatches different actions
+"""
+
+__copyright__ = "Copyright (c) 2021 Mathias Payer <mathias.payer@nebelwelt.net>"
+__license__ = "MIT License"
+
+__version__ = '0.1'
+
+
+import argparse
+from configparser import ConfigParser
+import logging
+import os
+import subprocess
+
+class GoGit:
+	def __init__(self, configfile):
+		self.configfile = configfile
+		# Figure out how to do it (i.e., in what config)
+		self.config = ConfigParser(default_section='', strict=True)
+		self.config.read(configfile)
+
+
+	def register(self, project, url):
+		# Register a new project (and clone it)
+		logging.info('Registering a new project ({})'.format(project))
+		if os.path.exists(project):
+			logging.error('Folder {} exists in current directory, can\'t clone here!'.format(project))
+			exit(-1)
+		# Add details to our config file
+		self.config.add_section(project)
+		self.config.set(project, 'url', url)
+		self.config.set(project, 'path', os.path.join(os.getcwd(), project))
+		with open(self.configfile, 'w') as configfile:
+			self.config.write(configfile)
+		# Clone the repo into the current working directory as project
+		git = subprocess.run(['git', 'clone', '--quiet', url, project], text=True, capture_output=True, check=True)
+		if git.stdout != '':
+			logging.info(git.stdout)
+		if git.stderr != '':
+			logging.error(git.stderr)
+
+
+	def pull(self, project):
+		if self.config.has_option(project, 'projects'):
+			logging.info('Pulling group {}'.format(project))
+			projects = self.config.get(project, 'projects')
+			for proj in projects.split():
+				self.pull(proj)
+		else:
+			logging.info('Pulling project {}'.format(project))
+			# Clone the repo into the current working directory as project
+			path = self.config.get(project, 'path')
+			git = subprocess.run(['git', 'pull'], cwd=path, text=True, capture_output=True, check=True)
+			if git.stdout != '':
+				logging.info(git.stdout.strip())
+				if git.stdout.strip() != 'Already up to date.':
+					print('Updated {}'.format(project))
+			if git.stderr != '':
+				logging.error(git.stderr)
+		logging.info('Done pulling {}'.format(project))
+
+
+if __name__ == '__main__':
+	# Figure out what to do (i.e., what action)
+	parser = argparse.ArgumentParser()
+	parser.add_argument('-v', '--verbose', action='store_true',
+		help='Be more verbose.')
+	parser.add_argument('-c', '--config', action='store', metavar='CFG',
+		default=os.path.expanduser('~/.go_git'),
+		help='Config file, default "~/.go_git"')
+	parser.add_argument(default='', metavar='PROJECT|GROUP', dest='project',
+		help="Project or group that the action will be applied to")
+	group = parser.add_mutually_exclusive_group(required=True)
+
+	# Internal actions
+	group.add_argument('-r', '--regist', action='store',
+		metavar='URL', help='Register a new repository')
+	group.add_argument('-g', '--group', action='store', nargs='+',
+		metavar='PRJ', help='Register a new group')
+	group.add_argument('-d', '--drop', action='store_true',
+		help='Drop a repository or group')
+
+	# git actions
+	group.add_argument('-p', '--pull', action='store_true',
+		help='Pull a repository or group')
+	args = parser.parse_args()
+
+	if args.verbose:
+		logging.basicConfig(level=logging.INFO)
+
+	gogit = GoGit(args.config)
+
+	if args.regist != None:
+		gogit.register(args.project, args.regist)
+
+	if args.pull:
+		gogit.pull(args.project)
+
+	print(args)
+
+# TODO
+# Sanity check: check all config entries, do they exist and are they correct?
+# Sync: check if all repos are pulled or cloned
+# Group: needs to be implemented
+# Drop: needs to be implemented
